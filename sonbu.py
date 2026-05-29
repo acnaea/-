@@ -2,7 +2,11 @@ import discord
 from discord.ext import commands
 from discord.ui import View, Select, Button, Modal, TextInput
 import time
-import os  # Added to read the token from Render safely
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -11,8 +15,8 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Allowed Staff Role ID
-ALLOWED_ROLE_ID = 1500947284526108763
+# Match the exact variable name used on Railway
+ALLOWED_ROLE_ID = int(os.getenv("ALLOWED_ROLE_ID", 1500947284526108763))
 
 # Global dictionaries to track active rooms separately
 active_scrims = {}
@@ -372,7 +376,9 @@ class MainQueueView(View):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name} - Scrim Description Header Applied")
+    # Register global view listener so buttons don't break on bot reboot
+    bot.add_view(AdminControlPanelDashboard())
+    print(f"Logged in as {bot.user.name} - Railway Integration Active")
 
 
 @bot.event
@@ -491,6 +497,20 @@ async def on_interaction(interaction: discord.Interaction):
 # --- COMMANDS ---
 
 @bot.command()
+@commands.has_permissions(administrator=True)
+async def permission(ctx, role: discord.Role = None):
+    """View or set the designated staff role dynamically in memory"""
+    global ALLOWED_ROLE_ID
+    
+    if role is None:
+        await ctx.send(f"ℹ️ Current staff role permission is set to: <@&{ALLOWED_ROLE_ID}> (ID: `{ALLOWED_ROLE_ID}`)")
+        return
+        
+    ALLOWED_ROLE_ID = role.id
+    await ctx.send(f"✅ **Permission Updated!** Staff commands are now restricted to: {role.mention}\n*Note: To save this permanently across server restarts, please update your ALLOWED_ROLE_ID variable inside your Railway Dashboard!*")
+
+
+@bot.command()
 async def panel(ctx):
     if not has_staff_perms(ctx.author):
         await ctx.send("❌ Denied", delete_after=5)
@@ -547,7 +567,7 @@ async def tryout(ctx, size: int = None):
     
     active_tryouts[tryout_id] = {
         'board_msg_id': None,
-        'channel_id': ctx.channel.id,   
+        'channel_id': ctx.channel.id,
         'size': size,
         'cooldowns': {},  
         'players': []  
@@ -564,9 +584,9 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Denied", delete_after=5)
 
-# Securely grab token environment variable set up in Render dashboard settings
-TOKEN = os.getenv("DISCORD_TOKEN")
-if TOKEN:
-    bot.run(TOKEN)
-else:
-    print("CRITICAL ERROR: 'DISCORD_TOKEN' environment variable is missing!")
+# Grabs token smoothly using the 'DISCORD_TOKEN' key configured on Railway
+token = os.getenv('DISCORD_TOKEN')
+if not token:
+    raise ValueError("CRITICAL ERROR: 'DISCORD_TOKEN' environment variable is missing from the environment dashboard!")
+
+bot.run(token)
