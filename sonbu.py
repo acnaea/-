@@ -17,7 +17,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Match the exact variable name used on Railway
 ALLOWED_ROLE_ID = int(os.getenv("ALLOWED_ROLE_ID", 1500947284526108763))
-
+ALLOWED_ROLE_ID = int(os.getenv("ALLOWED_ROLE_ID", 1503629986886844497))
 # Global dictionaries to track active rooms separately
 active_scrims = {}
 active_tryouts = {}
