@@ -15,9 +15,10 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Match the exact variable name used on Railway
-ALLOWED_ROLE_ID = int(os.getenv("ALLOWED_ROLE_ID", 1500947284526108763))
-ALLOWED_ROLE_ID = int(os.getenv("ALLOWED_ROLE_ID", 1503629986886844497))
+# UPGRADED: Grabs raw comma-separated string from Railway, splits into a list of integer IDs
+raw_role_ids = os.getenv("ALLOWED_ROLE_ID", "1500947284526108763,1503629986886844497")
+ALLOWED_ROLE_IDS = [int(role_id.strip()) for role_id in raw_role_ids.split(",") if role_id.strip()]
+
 # Global dictionaries to track active rooms separately
 active_scrims = {}
 active_tryouts = {}
@@ -44,10 +45,11 @@ SCRIM_POSITIONS = ["CF", "RW", "LW", "CM", "GK"]
 
 
 def has_staff_perms(member: discord.Member):
-    """Check if member has the specific staff role or admin rights"""
+    """Check if member has any of the specific staff roles or admin rights"""
     if member.guild_permissions.administrator:
         return True
-    return any(role.id == ALLOWED_ROLE_ID for role in member.roles)
+    # UPGRADED: Checks if user has ANY of the roles specified in your Railway array
+    return any(role.id in ALLOWED_ROLE_IDS for role in member.roles)
 
 
 def format_team_list(team_players, max_size):
@@ -376,7 +378,6 @@ class MainQueueView(View):
 
 @bot.event
 async def on_ready():
-    # Register global view listener so buttons don't break on bot reboot
     bot.add_view(AdminControlPanelDashboard())
     print(f"Logged in as {bot.user.name} - Railway Integration Active")
 
@@ -496,18 +497,24 @@ async def on_interaction(interaction: discord.Interaction):
 
 # --- COMMANDS ---
 
+# UPGRADED: Completely rewritten to cleanly view or add multiple specific staff role IDs dynamically
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def permission(ctx, role: discord.Role = None):
-    """View or set the designated staff role dynamically in memory"""
-    global ALLOWED_ROLE_ID
+    """View or append designated staff roles dynamically in memory"""
+    global ALLOWED_ROLE_IDS
     
     if role is None:
-        await ctx.send(f"ℹ️ Current staff role permission is set to: <@&{ALLOWED_ROLE_ID}> (ID: `{ALLOWED_ROLE_ID}`)")
+        roles_mentions = ", ".join([f"<@&{r_id}>" for r_id in ALLOWED_ROLE_IDS]) if ALLOWED_ROLE_IDS else "`None`"
+        await ctx.send(f"ℹ️ Current staff role permissions are set to: {roles_mentions}")
         return
         
-    ALLOWED_ROLE_ID = role.id
-    await ctx.send(f"✅ **Permission Updated!** Staff commands are now restricted to: {role.mention}\n*Note: To save this permanently across server restarts, please update your ALLOWED_ROLE_ID variable inside your Railway Dashboard!*")
+    if role.id not in ALLOWED_ROLE_IDS:
+        ALLOWED_ROLE_IDS.append(role.id)
+        railway_format = ",".join(map(str, ALLOWED_ROLE_IDS))
+        await ctx.send(f"✅ **Permission Added!** Staff commands now include: {role.mention}\n*Note: To save permanently across server restarts, please update your ALLOWED_ROLE_ID variable inside Railway to:* `{railway_format}`")
+    else:
+        await ctx.send(f"ℹ️ {role.mention} is already in the allowed staff roles list.")
 
 
 @bot.command()
@@ -584,9 +591,8 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Denied", delete_after=5)
 
-# Grabs token smoothly using the 'DISCORD_TOKEN' key configured on Railway
 token = os.getenv('DISCORD_TOKEN')
 if not token:
-    raise ValueError("CRITICAL ERROR: 'DISCORD_TOKEN' environment variable is missing from the environment dashboard!")
+    raise ValueError("CRITICAL ERROR: 'DISCORD_TOKEN' environment variable is missing!")
 
 bot.run(token)
