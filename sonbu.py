@@ -5,7 +5,6 @@ import time
 import os
 from dotenv import load_dotenv
 
-# Try to load local .env file if it exists, but don't force it
 if os.path.exists(".env"):
     load_dotenv()
 
@@ -20,7 +19,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 server_data = {}
 
 def get_server_storage(guild_id: int):
-    """Initializes or fetches the isolated memory space for a specific server."""
     if guild_id not in server_data:
         server_data[guild_id] = {
             "allowed_roles": [],    
@@ -33,7 +31,7 @@ def get_server_storage(guild_id: int):
 
 
 ALL_PLAYSTYLES = [
-    discord.SelectOption(label="Styleless", emoji="⚽"),
+    discord.SelectOption(label="Styleless", emoji="⚽", description="Default - No limits"),
     discord.SelectOption(label="Egoist", emoji="👑"),
     discord.SelectOption(label="Speedster", emoji="⚡"),
     discord.SelectOption(label="Monster", emoji="👹"),
@@ -269,7 +267,7 @@ class StyleSelectionDropdown(Select):
         if room:
             items = room['lineup'].values() if is_scrim else room['players']
             for val in items:
-                if val and val[1] != "Styleless":  # Skip tracking Styleless so it never gets locked out
+                if val and val[1] != "Styleless":  
                     taken_styles.add(val[1])
         
         available_styles = []
@@ -279,7 +277,7 @@ class StyleSelectionDropdown(Select):
             available_styles.append(option)
             
         super().__init__(
-            placeholder="Pick your play style...", 
+            placeholder="Step 2: Choose your style...", 
             options=available_styles if available_styles else [discord.SelectOption(label="No Styles Available")]
         )
 
@@ -292,6 +290,10 @@ class StyleSelectionDropdown(Select):
             
         style_choice = self.values[0]
         if style_choice == "No Styles Available": return
+
+        if self.is_scrim and room['lineup'].get(self.position_choice) is not None:
+            await interaction.response.send_message("❌ This position was just taken by someone else! Please close this menu and click Join again.", ephemeral=True)
+            return
 
         await interaction.response.defer()
         guild = interaction.guild
@@ -370,7 +372,7 @@ class PositionSelectionDropdown(Select):
                     available_options.append(discord.SelectOption(label=pos_name))
                     
         super().__init__(
-            placeholder="Pick your position...", 
+            placeholder="Step 1: Pick your position...", 
             options=available_options if available_options else [discord.SelectOption(label="Full")]
         )
 
@@ -380,11 +382,18 @@ class PositionSelectionDropdown(Select):
             await interaction.response.send_message("⚠️ Slots filled.", ephemeral=True)
             return
             
+        storage = get_server_storage(interaction.guild.id)
+        scrim = storage['active_scrims'].get(self.room_id)
+        
+        if scrim and scrim['lineup'].get(chosen_position) is not None:
+            await interaction.response.send_message("⚠️ Someone just claimed that position! Select a different open option.", ephemeral=True)
+            return
+
         next_view = View(timeout=60)
         next_view.add_item(StyleSelectionDropdown(interaction.guild.id, self.room_id, is_scrim=True, position_choice=chosen_position))
         
         await interaction.response.edit_message(
-            content=f"✅ **Position:** {chosen_position}\n**Step 2/2** — Pick your play style:",
+            content=f"🟢 **Position:** {chosen_position} Selected!\nProceed to choose your playstyle:",
             view=next_view
         )
 
@@ -402,7 +411,7 @@ class MainQueueView(View):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name} - Unlimited Styleless Choice Active")
+    print(f"Logged in as {bot.user.name} - Safe 2-Step Active")
 
 
 @bot.event
@@ -443,7 +452,7 @@ async def on_interaction(interaction: discord.Interaction):
             
             view = View(timeout=60)
             view.add_item(PositionSelectionDropdown(guild.id, room_id))
-            await interaction.response.send_message(content="**Step 1/2** — Pick your position:", view=view, ephemeral=True)
+            await interaction.response.send_message(content="**Roster Selection**", view=view, ephemeral=True)
         else:
             if any(p[0] == user_id for p in room['players']):
                 await interaction.response.send_message("⚠️ Already joined.", ephemeral=True)
@@ -454,7 +463,7 @@ async def on_interaction(interaction: discord.Interaction):
                 
             view = View(timeout=60)
             view.add_item(StyleSelectionDropdown(guild.id, room_id, is_scrim=False))
-            await interaction.response.send_message(content="Pick your play style to finalize entry:", view=view, ephemeral=True)
+            await interaction.response.send_message(content="**Roster Selection**", view=view, ephemeral=True)
         
     elif custom_id.startswith("leave_scrim_") or custom_id.startswith("leave_tryout_"):
         is_scrim = "scrim_" in custom_id
@@ -597,7 +606,6 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Denied", delete_after=5)
 
-# Clear Environment Router Check
 token = os.environ.get('BOT_TOKEN') or os.getenv('BOT_TOKEN')
 
 if not token:
