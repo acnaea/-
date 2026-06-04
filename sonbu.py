@@ -5,8 +5,9 @@ import time
 import os
 from dotenv import load_dotenv
 
-# Load environment variables (Strictly for BOT_TOKEN)
-load_dotenv()
+# Try to load local .env file if it exists, but don't force it
+if os.path.exists(".env"):
+    load_dotenv()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -16,19 +17,17 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # --- PER-SERVER STORAGE SYSTEM ---
-# This structure keeps every server's data completely isolated from one another.
-# Key: guild_id (int) -> Value: dict of server-specific data
 server_data = {}
 
 def get_server_storage(guild_id: int):
     """Initializes or fetches the isolated memory space for a specific server."""
     if guild_id not in server_data:
         server_data[guild_id] = {
-            "allowed_roles": [],    # List of staff role IDs for this server
-            "blacklist": set(),     # Set of blacklisted user IDs for this server
-            "whitelist": set(),     # Set of whitelisted user IDs for this server
-            "active_scrims": {},    # Active scrim matches running on this server
-            "active_tryouts": {}    # Active tryout matches running on this server
+            "allowed_roles": [],    
+            "blacklist": set(),     
+            "whitelist": set(),     
+            "active_scrims": {},    
+            "active_tryouts": {}    
         }
     return server_data[guild_id]
 
@@ -49,7 +48,6 @@ SCRIM_POSITIONS = ["CF", "RW", "LW", "CM", "GK"]
 
 
 def has_staff_perms(member: discord.Member):
-    """Check if member has server admin rights or any of their server's registered staff roles"""
     if member.guild_permissions.administrator:
         return True
     storage = get_server_storage(member.guild.id)
@@ -146,7 +144,6 @@ class AdminActionModal(Modal):
             storage['whitelist'].discard(target_id)
             storage['blacklist'].add(target_id)
             
-            # Remove player cleanly from this server's active sessions only
             for s_id, scrim in storage['active_scrims'].items():
                 for pos, val in scrim['lineup'].items():
                     if val and val[0] == target_id:
@@ -265,7 +262,6 @@ class StyleSelectionDropdown(Select):
         self.position_choice = position_choice
         super().__init__(placeholder="Pick your play style...", options=[discord.SelectOption(label="Loading...")])
 
-    # Dynamic option initialization on interaction to guarantee up-to-date styles per guild
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         storage = get_server_storage(interaction.guild.id)
         room = storage['active_scrims'].get(self.room_id) if self.is_scrim else storage['active_tryouts'].get(self.room_id)
@@ -401,7 +397,7 @@ class MainQueueView(View):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name} - Public Per-Server Storage Online")
+    print(f"Logged in as {bot.user.name} - Public Multi-Server Setup Live")
 
 
 @bot.event
@@ -413,7 +409,6 @@ async def on_interaction(interaction: discord.Interaction):
     user_id = interaction.user.id
     storage = get_server_storage(guild.id)
     
-    # --- JOIN SYSTEM ---
     if custom_id.startswith("join_scrim_") or custom_id.startswith("join_tryout_"):
         is_scrim = "scrim_" in custom_id
         room_id = custom_id.replace("join_scrim_", "") if is_scrim else custom_id.replace("join_tryout_", "")
@@ -456,7 +451,6 @@ async def on_interaction(interaction: discord.Interaction):
             view.add_item(StyleSelectionDropdown(room_id, is_scrim=False))
             await interaction.response.send_message(content="Pick your play style to finalize entry:", view=view, ephemeral=True)
         
-    # --- LEAVE SYSTEM ---
     elif custom_id.startswith("leave_scrim_") or custom_id.startswith("leave_tryout_"):
         is_scrim = "scrim_" in custom_id
         room_id = custom_id.replace("leave_scrim_", "") if is_scrim else custom_id.replace("leave_tryout_", "")
@@ -485,7 +479,6 @@ async def on_interaction(interaction: discord.Interaction):
             else:
                 await interaction.response.send_message("⚠️ Not in lineup.", ephemeral=True)
 
-    # --- CANCEL SYSTEM ---
     elif custom_id.startswith("cancel_scrim_") or custom_id.startswith("cancel_tryout_"):
         is_scrim = "scrim_" in custom_id
         room_id = custom_id.replace("cancel_scrim_", "") if is_scrim else custom_id.replace("cancel_tryout_", "")
@@ -511,7 +504,6 @@ async def on_interaction(interaction: discord.Interaction):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def permission(ctx, role: discord.Role = None):
-    """View, add, or remove authorized staff roles for this specific server"""
     storage = get_server_storage(ctx.guild.id)
     
     if role is None:
@@ -600,4 +592,10 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Denied", delete_after=5)
 
-bot.run(os.getenv('BOT_TOKEN'))
+# Clear Environment Router Check
+token = os.environ.get('BOT_TOKEN') or os.getenv('BOT_TOKEN')
+
+if not token:
+    print("❌ ERROR: BOT_TOKEN is completely missing from Railway environment!")
+else:
+    bot.run(token)
