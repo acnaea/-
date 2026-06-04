@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord.ui import View, Select, Button, Modal, TextInput
 import time
 import os
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 # Load environment variables
 load_dotenv()
@@ -15,9 +15,8 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# UPGRADED: Grabs raw comma-separated string from Railway, splits into a list of integer IDs
-raw_role_ids = os.getenv("ALLOWED_ROLE_ID", "1500947284526108763,1503629986886844497")
-ALLOWED_ROLE_IDS = [int(role_id.strip()) for role_id in raw_role_ids.split(",") if role_id.strip()]
+# Fetch from .env, fallback to the original default ID if not found
+ALLOWED_ROLE_ID = int(os.getenv("ALLOWED_ROLE_ID", 1500947284526108763))
 
 # Global dictionaries to track active rooms separately
 active_scrims = {}
@@ -45,11 +44,10 @@ SCRIM_POSITIONS = ["CF", "RW", "LW", "CM", "GK"]
 
 
 def has_staff_perms(member: discord.Member):
-    """Check if member has any of the specific staff roles or admin rights"""
+    """Check if member has the specific staff role or admin rights"""
     if member.guild_permissions.administrator:
         return True
-    # UPGRADED: Checks if user has ANY of the roles specified in your Railway array
-    return any(role.id in ALLOWED_ROLE_IDS for role in member.roles)
+    return any(role.id == ALLOWED_ROLE_ID for role in member.roles)
 
 
 def format_team_list(team_players, max_size):
@@ -162,26 +160,30 @@ class AdminActionModal(Modal):
 
 
 class AdminScrimKickDropdown(Select):
-    def __init__(self, room_id, is_scrim, active_players):
-        self.room_id = room_id
-        self.is_scrim = is_scrim
-        options = [discord.SelectOption(label=p['name'], value=p['value']) for p in active_players]
+    def __init__(self, active_players):
+        options = [
+            discord.SelectOption(label=p['name'], value=f"{p['is_scrim']}|{p['room_id']}|{p['value']}") 
+            for p in active_players
+        ]
         super().__init__(placeholder="Select a player to kick...", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         
-        if self.is_scrim:
-            room = active_scrims.get(self.room_id)
-            if room:
-                room['lineup'][self.values[0]] = None
+        is_scrim_str, room_id, item_val = self.values[0].split('|')
+        is_scrim = is_scrim_str == 'True'
+        
+        if is_scrim:
+            room = active_scrims.get(room_id)
+            if room and item_val in room['lineup']:
+                room['lineup'][item_val] = None
         else:
-            room = active_tryouts.get(self.room_id)
+            room = active_tryouts.get(room_id)
             if room:
-                target_id = int(self.values[0])
+                target_id = int(item_val)
                 room['players'] = [p for p in room['players'] if p[0] != target_id]
         
-        await refresh_main_board(interaction.guild, self.room_id, self.is_scrim)
+        await refresh_main_board(interaction.guild, room_id, is_scrim)
         await interaction.followup.send("👢 Kicked player out of the session.", ephemeral=True)
 
 
@@ -214,8 +216,22 @@ class AdminControlPanelDashboard(View):
             return
 
         view = View(timeout=60)
-        view.add_item(AdminScrimKickDropdown(active_players[0]['room_id'], active_players[0]['is_scrim'], active_players))
+        view.add_item(AdminScrimKickDropdown(active_players))
         await interaction.response.send_message("Select player:", view=view, ephemeral=True)
+
+    @discord.ui.button(label="🚫 Blacklist User", style=discord.ButtonStyle.danger, custom_id="admin_blacklist_btn")
+    async def admin_blacklist(self, interaction: discord.Interaction, button: discord.Button):
+        if not has_staff_perms(interaction.user):
+            await interaction.response.send_message("❌ Denied", ephemeral=True)
+            return
+        await interaction.response.send_modal(AdminActionModal("blacklist"))
+
+    @discord.ui.button(label="✅ Whitelist User", style=discord.ButtonStyle.success, custom_id="admin_whitelist_btn")
+    async def admin_whitelist(self, interaction: discord.Interaction, button: discord.Button):
+        if not has_staff_perms(interaction.user):
+            await interaction.response.send_message("❌ Denied", ephemeral=True)
+            return
+        await interaction.response.send_modal(AdminActionModal("whitelist"))
 
 
 # --- SELECTION & INTERACTION FLOWS ---
@@ -378,8 +394,7 @@ class MainQueueView(View):
 
 @bot.event
 async def on_ready():
-    bot.add_view(AdminControlPanelDashboard())
-    print(f"Logged in as {bot.user.name} - Railway Integration Active")
+    print(f"Logged in as {bot.user.name} - Fire Emoji Removed from Tryout")
 
 
 @bot.event
@@ -497,24 +512,23 @@ async def on_interaction(interaction: discord.Interaction):
 
 # --- COMMANDS ---
 
-# UPGRADED: Completely rewritten to cleanly view or add multiple specific staff role IDs dynamically
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def permission(ctx, role: discord.Role = None):
-    """View or append designated staff roles dynamically in memory"""
-    global ALLOWED_ROLE_IDS
+    """View or set the designated staff role dynamically and save to .env"""
+    global ALLOWED_ROLE_ID
     
     if role is None:
-        roles_mentions = ", ".join([f"<@&{r_id}>" for r_id in ALLOWED_ROLE_IDS]) if ALLOWED_ROLE_IDS else "`None`"
-        await ctx.send(f"ℹ️ Current staff role permissions are set to: {roles_mentions}")
+        await ctx.send(f"ℹ️ Current staff role permission is set to: <@&{ALLOWED_ROLE_ID}> (ID: `{ALLOWED_ROLE_ID}`)")
         return
         
-    if role.id not in ALLOWED_ROLE_IDS:
-        ALLOWED_ROLE_IDS.append(role.id)
-        railway_format = ",".join(map(str, ALLOWED_ROLE_IDS))
-        await ctx.send(f"✅ **Permission Added!** Staff commands now include: {role.mention}\n*Note: To save permanently across server restarts, please update your ALLOWED_ROLE_ID variable inside Railway to:* `{railway_format}`")
-    else:
-        await ctx.send(f"ℹ️ {role.mention} is already in the allowed staff roles list.")
+    ALLOWED_ROLE_ID = role.id
+    
+    try:
+        set_key(".env", "ALLOWED_ROLE_ID", str(role.id))
+        await ctx.send(f"✅ **Permission Updated & Saved to .env!** Staff commands are now restricted to: {role.mention}")
+    except Exception as e:
+        await ctx.send(f"✅ **Permission updated in memory**, but couldn't write to file: `{e}`\nStaff commands restricted to: {role.mention}")
 
 
 @bot.command()
@@ -581,7 +595,8 @@ async def tryout(ctx, size: int = None):
     }
         
     embed, _ = generate_tryout_embed(tryout_id)
-    content_text = f"🔥 **{size}V{size} TRYOUT** | Hosted by **{ctx.author.display_name}**\nJoin up to get placed onto a team!"
+    # FIXED: Removed the fire emoji from the string below
+    content_text = f"**{size}V{size} TRYOUT** | Hosted by **{ctx.author.display_name}**\nJoin up to get placed onto a team!"
     board_msg = await ctx.send(content=content_text, embed=embed, view=MainQueueView(tryout_id, is_scrim=False))
     active_tryouts[tryout_id]['board_msg_id'] = board_msg.id
 
@@ -591,8 +606,4 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("❌ Denied", delete_after=5)
 
-token = os.getenv('DISCORD_TOKEN')
-if not token:
-    raise ValueError("CRITICAL ERROR: 'DISCORD_TOKEN' environment variable is missing!")
-
-bot.run(token)
+bot.run(os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE'))
