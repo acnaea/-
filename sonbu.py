@@ -15,8 +15,9 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Fetch from .env, fallback to the original default ID if not found
-ALLOWED_ROLE_ID = int(os.getenv("ALLOWED_ROLE_ID", 1500947284526108763))
+# FIXED: Fetch string from .env, split by comma, and convert to a list of integers
+raw_roles = os.getenv("ALLOWED_ROLE_ID", "1500947284526108763")
+ALLOWED_ROLE_IDS = [int(r.strip()) for r in raw_roles.split(",") if r.strip().isdigit()]
 
 # Global dictionaries to track active rooms separately
 active_scrims = {}
@@ -44,10 +45,11 @@ SCRIM_POSITIONS = ["CF", "RW", "LW", "CM", "GK"]
 
 
 def has_staff_perms(member: discord.Member):
-    """Check if member has the specific staff role or admin rights"""
+    """Check if member has any of the specific staff roles or admin rights"""
     if member.guild_permissions.administrator:
         return True
-    return any(role.id == ALLOWED_ROLE_ID for role in member.roles)
+    # FIXED: Check against our list of permitted IDs
+    return any(role.id in ALLOWED_ROLE_IDS for role in member.roles)
 
 
 def format_team_list(team_players, max_size):
@@ -228,7 +230,7 @@ class AdminControlPanelDashboard(View):
 
     @discord.ui.button(label="✅ Whitelist User", style=discord.ButtonStyle.success, custom_id="admin_whitelist_btn")
     async def admin_whitelist(self, interaction: discord.Interaction, button: discord.Button):
-        if not has_staff_perms(interaction.user):
+        if not har_staff_perms(interaction.user):
             await interaction.response.send_message("❌ Denied", ephemeral=True)
             return
         await interaction.response.send_modal(AdminActionModal("whitelist"))
@@ -394,7 +396,7 @@ class MainQueueView(View):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name} - Fire Emoji Removed from Tryout")
+    print(f"Logged in as {bot.user.name} - Multi-Role ID Crash Fix Online")
 
 
 @bot.event
@@ -515,20 +517,25 @@ async def on_interaction(interaction: discord.Interaction):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def permission(ctx, role: discord.Role = None):
-    """View or set the designated staff role dynamically and save to .env"""
-    global ALLOWED_ROLE_ID
+    """View or append/update designated staff roles dynamically and save list to .env"""
+    global ALLOWED_ROLE_IDS
     
     if role is None:
-        await ctx.send(f"ℹ️ Current staff role permission is set to: <@&{ALLOWED_ROLE_ID}> (ID: `{ALLOWED_ROLE_ID}`)")
+        mentions = " ".join([f"<@&{r_id}>" for r_id in ALLOWED_ROLE_IDS])
+        await ctx.send(f"ℹ️ Current active staff roles: {mentions if mentions else '`None Set`'} (IDs: `{ALLOWED_ROLE_IDS}`)")
         return
         
-    ALLOWED_ROLE_ID = role.id
+    # FIXED: If role isn't tracked yet, append it. Otherwise keep it as is.
+    if role.id not in ALLOWED_ROLE_IDS:
+        ALLOWED_ROLE_IDS.append(role.id)
+        
+    env_format = ",".join(str(r_id) for r_id in ALLOWED_ROLE_IDS)
     
     try:
-        set_key(".env", "ALLOWED_ROLE_ID", str(role.id))
-        await ctx.send(f"✅ **Permission Updated & Saved to .env!** Staff commands are now restricted to: {role.mention}")
+        set_key(".env", "ALLOWED_ROLE_ID", env_format)
+        await ctx.send(f"✅ **Permission Saved to .env!** Authorized roles list is now: " + " ".join([f"<@&{r}>" for r in ALLOWED_ROLE_IDS]))
     except Exception as e:
-        await ctx.send(f"✅ **Permission updated in memory**, but couldn't write to file: `{e}`\nStaff commands restricted to: {role.mention}")
+        await ctx.send(f"✅ **Permission updated in memory**, but couldn't write to file: `{e}`\nAuthorized list: " + " ".join([f"<@&{r}>" for r in ALLOWED_ROLE_IDS]))
 
 
 @bot.command()
@@ -595,7 +602,6 @@ async def tryout(ctx, size: int = None):
     }
         
     embed, _ = generate_tryout_embed(tryout_id)
-    # FIXED: Removed the fire emoji from the string below
     content_text = f"**{size}V{size} TRYOUT** | Hosted by **{ctx.author.display_name}**\nJoin up to get placed onto a team!"
     board_msg = await ctx.send(content=content_text, embed=embed, view=MainQueueView(tryout_id, is_scrim=False))
     active_tryouts[tryout_id]['board_msg_id'] = board_msg.id
