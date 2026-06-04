@@ -33,6 +33,7 @@ def get_server_storage(guild_id: int):
 
 
 ALL_PLAYSTYLES = [
+    discord.SelectOption(label="Styleless", emoji="⚽"),
     discord.SelectOption(label="Egoist", emoji="👑"),
     discord.SelectOption(label="Speedster", emoji="⚡"),
     discord.SelectOption(label="Monster", emoji="👹"),
@@ -256,30 +257,31 @@ async def refresh_main_board(guild, room_id, is_scrim):
 
 
 class StyleSelectionDropdown(Select):
-    def __init__(self, room_id, is_scrim, position_choice=None):
+    def __init__(self, guild_id, room_id, is_scrim, position_choice=None):
         self.room_id = room_id
         self.is_scrim = is_scrim
         self.position_choice = position_choice
-        super().__init__(placeholder="Pick your play style...", options=[discord.SelectOption(label="Loading...")])
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        storage = get_server_storage(interaction.guild.id)
-        room = storage['active_scrims'].get(self.room_id) if self.is_scrim else storage['active_tryouts'].get(self.room_id)
+        
+        storage = get_server_storage(guild_id)
+        room = storage['active_scrims'].get(room_id) if is_scrim else storage['active_tryouts'].get(room_id)
         
         taken_styles = set()
         if room:
-            items = room['lineup'].values() if self.is_scrim else room['players']
+            items = room['lineup'].values() if is_scrim else room['players']
             for val in items:
-                if val: taken_styles.add(val[1])
+                if val and val[1] != "Styleless":  # Skip tracking Styleless so it never gets locked out
+                    taken_styles.add(val[1])
         
         available_styles = []
         for option in ALL_PLAYSTYLES:
             if option.label in taken_styles: continue
-            if self.is_scrim and self.position_choice == "GK" and option.label == "Glam": continue
+            if is_scrim and position_choice == "GK" and option.label == "Glam": continue
             available_styles.append(option)
             
-        self.options = available_styles if available_styles else [discord.SelectOption(label="No Styles Available")]
-        return True
+        super().__init__(
+            placeholder="Pick your play style...", 
+            options=available_styles if available_styles else [discord.SelectOption(label="No Styles Available")]
+        )
 
     async def callback(self, interaction: discord.Interaction):
         storage = get_server_storage(interaction.guild.id)
@@ -295,10 +297,11 @@ class StyleSelectionDropdown(Select):
         guild = interaction.guild
         
         if self.is_scrim:
-            taken_styles = [val[1] for val in room['lineup'].values() if val]
-            if style_choice in taken_styles:
-                await interaction.followup.send("⚠️ Style taken.", ephemeral=True)
-                return
+            if style_choice != "Styleless":
+                taken_styles = [val[1] for val in room['lineup'].values() if val]
+                if style_choice in taken_styles:
+                    await interaction.followup.send("⚠️ Style taken.", ephemeral=True)
+                    return
                 
             room['lineup'][self.position_choice] = (interaction.user.id, style_choice)
             
@@ -322,10 +325,11 @@ class StyleSelectionDropdown(Select):
             )
             
         else:
-            taken_styles = [val[1] for val in room['players']]
-            if style_choice in taken_styles:
-                await interaction.followup.send("⚠️ Style taken.", ephemeral=True)
-                return
+            if style_choice != "Styleless":
+                taken_styles = [val[1] for val in room['players']]
+                if style_choice in taken_styles:
+                    await interaction.followup.send("⚠️ Style taken.", ephemeral=True)
+                    return
                 
             if len(room['players']) >= (room['size'] * 2):
                 await interaction.followup.send("⚠️ Queue is full.", ephemeral=True)
@@ -354,20 +358,21 @@ class StyleSelectionDropdown(Select):
 
 
 class PositionSelectionDropdown(Select):
-    def __init__(self, room_id):
+    def __init__(self, guild_id, room_id):
         self.room_id = room_id
-        super().__init__(placeholder="Pick your position...", options=[discord.SelectOption(label="Loading...")])
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        storage = get_server_storage(interaction.guild.id)
-        scrim = storage['active_scrims'].get(self.room_id)
+        storage = get_server_storage(guild_id)
+        scrim = storage['active_scrims'].get(room_id)
+        
         available_options = []
         if scrim:
             for pos_name in SCRIM_POSITIONS:
                 if scrim['lineup'][pos_name] is None:
                     available_options.append(discord.SelectOption(label=pos_name))
-        self.options = available_options if available_options else [discord.SelectOption(label="Full")]
-        return True
+                    
+        super().__init__(
+            placeholder="Pick your position...", 
+            options=available_options if available_options else [discord.SelectOption(label="Full")]
+        )
 
     async def callback(self, interaction: discord.Interaction):
         chosen_position = self.values[0]
@@ -376,7 +381,7 @@ class PositionSelectionDropdown(Select):
             return
             
         next_view = View(timeout=60)
-        next_view.add_item(StyleSelectionDropdown(self.room_id, is_scrim=True, position_choice=chosen_position))
+        next_view.add_item(StyleSelectionDropdown(interaction.guild.id, self.room_id, is_scrim=True, position_choice=chosen_position))
         
         await interaction.response.edit_message(
             content=f"✅ **Position:** {chosen_position}\n**Step 2/2** — Pick your play style:",
@@ -397,7 +402,7 @@ class MainQueueView(View):
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name} - Public Multi-Server Setup Live")
+    print(f"Logged in as {bot.user.name} - Unlimited Styleless Choice Active")
 
 
 @bot.event
@@ -437,7 +442,7 @@ async def on_interaction(interaction: discord.Interaction):
                 return
             
             view = View(timeout=60)
-            view.add_item(PositionSelectionDropdown(room_id))
+            view.add_item(PositionSelectionDropdown(guild.id, room_id))
             await interaction.response.send_message(content="**Step 1/2** — Pick your position:", view=view, ephemeral=True)
         else:
             if any(p[0] == user_id for p in room['players']):
@@ -448,7 +453,7 @@ async def on_interaction(interaction: discord.Interaction):
                 return
                 
             view = View(timeout=60)
-            view.add_item(StyleSelectionDropdown(room_id, is_scrim=False))
+            view.add_item(StyleSelectionDropdown(guild.id, room_id, is_scrim=False))
             await interaction.response.send_message(content="Pick your play style to finalize entry:", view=view, ephemeral=True)
         
     elif custom_id.startswith("leave_scrim_") or custom_id.startswith("leave_tryout_"):
