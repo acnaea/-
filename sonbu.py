@@ -15,7 +15,7 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- PER-SERVER STORAGE SYSTEM ---
+# --- SERVER STORAGE ---
 server_data = {}
 
 def get_server_storage(guild_id: int):
@@ -31,7 +31,7 @@ def get_server_storage(guild_id: int):
 
 
 ALL_PLAYSTYLES = [
-    discord.SelectOption(label="Styleless", emoji="⚽", description="Default - No limits"),
+    discord.SelectOption(label="Styleless", emoji="⚽"),
     discord.SelectOption(label="Egoist", emoji="👑"),
     discord.SelectOption(label="Speedster", emoji="⚡"),
     discord.SelectOption(label="Monster", emoji="👹"),
@@ -57,11 +57,11 @@ def format_team_list(team_players, max_size):
     lines = []
     for i in range(max_size):
         if i < len(team_players):
-            user_id, style = team_players[i]
-            lines.append(f"> **#{i+1}** | <@{user_id}> {style.lower()}")
+            user_id = team_players[i]
+            lines.append(f"> **#{i+1}** | <@{user_id}>")
         else:
             lines.append(f"> **#{i+1}** | ")
-    return "\n".join(lines) if lines else "> *Empty*"
+    return "\n".join(lines) if lines else "> Empty"
 
 
 def generate_scrim_embed(guild_id, scrim_id):
@@ -74,7 +74,7 @@ def generate_scrim_embed(guild_id, scrim_id):
     description_text = "# SCRIM LINEUP\n"
     
     for pos in SCRIM_POSITIONS:
-        if lineup[pos]:
+        if lineup.get(pos):
             user_id, style_str = lineup[pos]
             description_text += f"> **{pos:<2}** |  <@{user_id}> {style_str.lower()}\n"
         else:
@@ -101,9 +101,9 @@ def generate_tryout_embed(guild_id, tryout_id):
     team1 = players[:size]
     team2 = players[size : size * 2]
     
-    embed = discord.Embed(title=f"{size}V{size} TRYOUT LINEUP", color=discord.Color.dark_embed())
-    embed.add_field(name="🔵 Team 1", value=format_team_list(team1, size), inline=True)
-    embed.add_field(name="🔴 Team 2", value=format_team_list(team2, size), inline=True)
+    embed = discord.Embed(color=discord.Color.dark_embed())
+    embed.add_field(name="Team 1", value=format_team_list(team1, size), inline=True)
+    embed.add_field(name="Team 2", value=format_team_list(team2, size), inline=True)
     
     filled_count = len(players)
     max_players = size * 2
@@ -136,7 +136,7 @@ class AdminActionModal(Modal):
         try:
             target_id = int(self.user_input.value.strip())
         except ValueError:
-            await interaction.followup.send("❌ Invalid ID format.", ephemeral=True)
+            await interaction.followup.send("Invalid ID format.", ephemeral=True)
             return
 
         if self.action_type == "blacklist":
@@ -149,16 +149,16 @@ class AdminActionModal(Modal):
                         scrim['lineup'][pos] = None
                         await refresh_main_board(interaction.guild, s_id, is_scrim=True)
             for t_id, tryout in storage['active_tryouts'].items():
-                if any(p[0] == target_id for p in tryout['players']):
-                    tryout['players'] = [p for p in tryout['players'] if p[0] != target_id]
+                if target_id in tryout['players']:
+                    tryout['players'] = [p for p in tryout['players'] if p != target_id]
                     await refresh_main_board(interaction.guild, t_id, is_scrim=False)
 
-            await interaction.followup.send(f"🚫 User `<@{target_id}>` blacklisted on this server.", ephemeral=True)
+            await interaction.followup.send(f"User <@{target_id}> blacklisted on this server.", ephemeral=True)
 
         elif self.action_type == "whitelist":
             storage['blacklist'].discard(target_id)
             storage['whitelist'].add(target_id)
-            await interaction.followup.send(f"✅ User `<@{target_id}>` whitelisted on this server.", ephemeral=True)
+            await interaction.followup.send(f"User <@{target_id}> whitelisted on this server.", ephemeral=True)
 
 
 class AdminScrimKickDropdown(Select):
@@ -184,20 +184,20 @@ class AdminScrimKickDropdown(Select):
             room = storage['active_tryouts'].get(room_id)
             if room:
                 target_id = int(item_val)
-                room['players'] = [p for p in room['players'] if p[0] != target_id]
+                room['players'] = [p for p in room['players'] if p != target_id]
         
         await refresh_main_board(interaction.guild, room_id, is_scrim)
-        await interaction.followup.send("👢 Kicked player out of the session.", ephemeral=True)
+        await interaction.followup.send("Kicked player out of the session.", ephemeral=True)
 
 
 class AdminControlPanelDashboard(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="👢 Kick Player", style=discord.ButtonStyle.primary, custom_id="admin_kick_btn")
+    @discord.ui.button(label="Kick Player", style=discord.ButtonStyle.primary, custom_id="admin_kick_btn")
     async def admin_kick(self, interaction: discord.Interaction, button: discord.Button):
         if not has_staff_perms(interaction.user):
-            await interaction.response.send_message("❌ Denied", ephemeral=True)
+            await interaction.response.send_message("Access denied.", ephemeral=True)
             return
 
         storage = get_server_storage(interaction.guild.id)
@@ -212,29 +212,29 @@ class AdminControlPanelDashboard(View):
         
         for t_id, t_data in storage['active_tryouts'].items():
             for p in t_data['players']:
-                member = interaction.guild.get_member(p[0])
-                name = member.display_name if member else f"ID: {p[0]}"
-                active_players.append({'name': f"Tryout: {name}", 'value': str(p[0]), 'room_id': t_id, 'is_scrim': False})
+                member = interaction.guild.get_member(p)
+                name = member.display_name if member else f"ID: {p}"
+                active_players.append({'name': f"Tryout: {name}", 'value': str(p), 'room_id': t_id, 'is_scrim': False})
 
         if not active_players:
-            await interaction.response.send_message("ℹ️ No active players found on this server.", ephemeral=True)
+            await interaction.response.send_message("No active players found on this server.", ephemeral=True)
             return
 
         view = View(timeout=60)
         view.add_item(AdminScrimKickDropdown(active_players))
         await interaction.response.send_message("Select player:", view=view, ephemeral=True)
 
-    @discord.ui.button(label="🚫 Blacklist User", style=discord.ButtonStyle.danger, custom_id="admin_blacklist_btn")
+    @discord.ui.button(label="Blacklist User", style=discord.ButtonStyle.danger, custom_id="admin_blacklist_btn")
     async def admin_blacklist(self, interaction: discord.Interaction, button: discord.Button):
         if not has_staff_perms(interaction.user):
-            await interaction.response.send_message("❌ Denied", ephemeral=True)
+            await interaction.response.send_message("Access denied.", ephemeral=True)
             return
         await interaction.response.send_modal(AdminActionModal("blacklist"))
 
-    @discord.ui.button(label="✅ Whitelist User", style=discord.ButtonStyle.success, custom_id="admin_whitelist_btn")
+    @discord.ui.button(label="Whitelist User", style=discord.ButtonStyle.success, custom_id="admin_whitelist_btn")
     async def admin_whitelist(self, interaction: discord.Interaction, button: discord.Button):
         if not has_staff_perms(interaction.user):
-            await interaction.response.send_message("❌ Denied", ephemeral=True)
+            await interaction.response.send_message("Access denied.", ephemeral=True)
             return
         await interaction.response.send_modal(AdminActionModal("whitelist"))
 
@@ -255,25 +255,23 @@ async def refresh_main_board(guild, room_id, is_scrim):
 
 
 class StyleSelectionDropdown(Select):
-    def __init__(self, guild_id, room_id, is_scrim, position_choice=None):
+    def __init__(self, guild_id, room_id, position_choice):
         self.room_id = room_id
-        self.is_scrim = is_scrim
         self.position_choice = position_choice
         
         storage = get_server_storage(guild_id)
-        room = storage['active_scrims'].get(room_id) if is_scrim else storage['active_tryouts'].get(room_id)
+        scrim = storage['active_scrims'].get(room_id)
         
         taken_styles = set()
-        if room:
-            items = room['lineup'].values() if is_scrim else room['players']
-            for val in items:
+        if scrim:
+            for val in scrim['lineup'].values():
                 if val and val[1] != "Styleless":  
                     taken_styles.add(val[1])
         
         available_styles = []
         for option in ALL_PLAYSTYLES:
             if option.label in taken_styles: continue
-            if is_scrim and position_choice == "GK" and option.label == "Glam": continue
+            if position_choice == "GK" and option.label == "Glam": continue
             available_styles.append(option)
             
         super().__init__(
@@ -282,81 +280,49 @@ class StyleSelectionDropdown(Select):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        
         storage = get_server_storage(interaction.guild.id)
-        room = storage['active_scrims'].get(self.room_id) if self.is_scrim else storage['active_tryouts'].get(self.room_id)
+        room = storage['active_scrims'].get(self.room_id)
         if not room:
-            await interaction.response.send_message("⚠️ Expired.", ephemeral=True)
+            await interaction.followup.send("This match session has expired.", ephemeral=True)
             return
             
         style_choice = self.values[0]
         if style_choice == "No Styles Available": return
 
-        if self.is_scrim and room['lineup'].get(self.position_choice) is not None:
-            await interaction.response.send_message("❌ This position was just taken by someone else! Please close this menu and click Join again.", ephemeral=True)
+        if room.get('lineup', {}).get(self.position_choice) is not None:
+            await interaction.followup.send("Someone just took this position. Close this menu and hit join again.", ephemeral=True)
             return
 
-        await interaction.response.defer()
         guild = interaction.guild
         
-        if self.is_scrim:
-            if style_choice != "Styleless":
-                taken_styles = [val[1] for val in room['lineup'].values() if val]
-                if style_choice in taken_styles:
-                    await interaction.followup.send("⚠️ Style taken.", ephemeral=True)
-                    return
-                
-            room['lineup'][self.position_choice] = (interaction.user.id, style_choice)
-            
-            try:
-                main_channel = guild.get_channel(room['channel_id'])
-                board_msg = await main_channel.fetch_message(room['board_msg_id'])
-                embed, is_full = generate_scrim_embed(guild.id, self.room_id)
-                
-                if is_full:
-                    mentions = " ".join([f"<@{val[0]}>" for val in room['lineup'].values() if val])
-                    content_update = f"✅ **{room['region']} SCRIM IS FULL!** {mentions}"
-                    await board_msg.edit(content=content_update, embed=embed, view=MainQueueView(self.room_id, is_scrim=True, full=True))
-                else:
-                    await board_msg.edit(embed=embed)
-            except Exception as e: print(e)
-            
-            await interaction.followup.edit_message(
-                message_id=interaction.message.id,
-                content=f"✅ **Roster Joined!**\n**Position:** {self.position_choice} | **Style:** {style_choice}",
-                view=None
-            )
-            
-        else:
-            if style_choice != "Styleless":
-                taken_styles = [val[1] for val in room['players']]
-                if style_choice in taken_styles:
-                    await interaction.followup.send("⚠️ Style taken.", ephemeral=True)
-                    return
-                
-            if len(room['players']) >= (room['size'] * 2):
-                await interaction.followup.send("⚠️ Queue is full.", ephemeral=True)
+        if style_choice != "Styleless":
+            taken_styles = [val[1] for val in room['lineup'].values() if val]
+            if style_choice in taken_styles:
+                await interaction.followup.send("That style is already taken.", ephemeral=True)
                 return
-
-            room['players'].append((interaction.user.id, style_choice))
             
-            try:
-                main_channel = guild.get_channel(room['channel_id'])
-                board_msg = await main_channel.fetch_message(room['board_msg_id'])
-                embed, is_full = generate_tryout_embed(guild.id, self.room_id)
-                
-                if is_full:
-                    mentions = " ".join([f"<@{p[0]}>" for p in room['players']])
-                    content_update = f"✅ **{room['size']}V{room['size']} TRYOUT IS FULL!** {mentions}"
-                    await board_msg.edit(content=content_update, embed=embed, view=MainQueueView(self.room_id, is_scrim=False, full=True))
-                else:
-                    await board_msg.edit(embed=embed)
-            except Exception as e: print(e)
+        room['lineup'][self.position_choice] = (interaction.user.id, style_choice)
+        
+        try:
+            main_channel = guild.get_channel(room['channel_id'])
+            board_msg = await main_channel.fetch_message(room['board_msg_id'])
+            embed, is_full = generate_scrim_embed(guild.id, self.room_id)
             
-            await interaction.followup.edit_message(
-                message_id=interaction.message.id,
-                content=f"✅ **Joined Team Queue!**\n**Style:** {style_choice}",
-                view=None
-            )
+            if is_full:
+                mentions = " ".join([f"<@{val[0]}>" for val in room['lineup'].values() if val])
+                content_update = f"**{room['region']} SCRIM IS FULL!** {mentions}"
+                await board_msg.edit(content=content_update, embed=embed, view=MainQueueView(self.room_id, is_scrim=True, full=True))
+            else:
+                await board_msg.edit(embed=embed)
+        except Exception as e: print(e)
+        
+        await interaction.followup.edit_message(
+            message_id=interaction.message.id,
+            content=f"Joined roster successfully.\nPosition: {self.position_choice} | Style: {style_choice}",
+            view=None
+        )
 
 
 class PositionSelectionDropdown(Select):
@@ -368,7 +334,7 @@ class PositionSelectionDropdown(Select):
         available_options = []
         if scrim:
             for pos_name in SCRIM_POSITIONS:
-                if scrim['lineup'][pos_name] is None:
+                if scrim['lineup'].get(pos_name) is None:
                     available_options.append(discord.SelectOption(label=pos_name))
                     
         super().__init__(
@@ -379,21 +345,21 @@ class PositionSelectionDropdown(Select):
     async def callback(self, interaction: discord.Interaction):
         chosen_position = self.values[0]
         if chosen_position == "Full":
-            await interaction.response.send_message("⚠️ Slots filled.", ephemeral=True)
+            await interaction.response.send_message("All slots are filled.", ephemeral=True)
             return
             
         storage = get_server_storage(interaction.guild.id)
         scrim = storage['active_scrims'].get(self.room_id)
         
-        if scrim and scrim['lineup'].get(chosen_position) is not None:
-            await interaction.response.send_message("⚠️ Someone just claimed that position! Select a different open option.", ephemeral=True)
+        if scrim and scrim.get('lineup', {}).get(chosen_position) is not None:
+            await interaction.response.send_message("Someone just claimed that position. Select a different open option.", ephemeral=True)
             return
 
         next_view = View(timeout=60)
-        next_view.add_item(StyleSelectionDropdown(interaction.guild.id, self.room_id, is_scrim=True, position_choice=chosen_position))
+        next_view.add_item(StyleSelectionDropdown(interaction.guild.id, self.room_id, position_choice=chosen_position))
         
         await interaction.response.edit_message(
-            content=f"🟢 **Position:** {chosen_position} Selected!\nProceed to choose your playstyle:",
+            content=f"Position: {chosen_position} selected.\nChoose your playstyle below:",
             view=next_view
         )
 
@@ -404,14 +370,14 @@ class MainQueueView(View):
         prefix = "scrim" if is_scrim else "tryout"
         
         if not full:
-            self.add_item(Button(label="⚽ Join Match", style=discord.ButtonStyle.primary, custom_id=f"join_{prefix}_{room_id}"))
-            self.add_item(Button(label="❌ Leave", style=discord.ButtonStyle.danger, custom_id=f"leave_{prefix}_{room_id}"))
-        self.add_item(Button(label="🗑️ Cancel", style=discord.ButtonStyle.secondary, custom_id=f"cancel_{prefix}_{room_id}"))
+            self.add_item(Button(label="Join Match", style=discord.ButtonStyle.primary, custom_id=f"join_{prefix}_{room_id}"))
+            self.add_item(Button(label="Leave", style=discord.ButtonStyle.danger, custom_id=f"leave_{prefix}_{room_id}"))
+        self.add_item(Button(label="Cancel", style=discord.ButtonStyle.secondary, custom_id=f"cancel_{prefix}_{room_id}"))
 
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name} - Safe 2-Step Active")
+    print(f"Logged in as {bot.user.name}")
 
 
 @bot.event
@@ -426,52 +392,84 @@ async def on_interaction(interaction: discord.Interaction):
     if custom_id.startswith("join_scrim_") or custom_id.startswith("join_tryout_"):
         is_scrim = "scrim_" in custom_id
         room_id = custom_id.replace("join_scrim_", "") if is_scrim else custom_id.replace("join_tryout_", "")
-        room = storage['active_scrims'].get(room_id) if is_scrim else storage['active_tryouts'].get(room_id)
         
-        if not room:
-            await interaction.response.send_message("⚠️ Expired.", ephemeral=True)
-            return
-
-        if user_id in storage['blacklist']:
-            await interaction.response.send_message("❌ Denied", ephemeral=True)
-            return
-
-        if str(user_id) in room['cooldowns']:
-            expiry = room['cooldowns'][str(user_id)]
-            remaining = int(expiry - time.time())
-            if remaining > 0:
-                await interaction.response.send_message(f"⏳ **Cooldown:** Wait **{remaining}s**.", ephemeral=True)
-                return
-            else:
-                del room['cooldowns'][str(user_id)]
-            
         if is_scrim:
+            room = storage['active_scrims'].get(room_id)
+            if not room:
+                await interaction.response.send_message("Session expired.", ephemeral=True)
+                return
+
+            if user_id in storage['blacklist']:
+                await interaction.response.send_message("Access denied.", ephemeral=True)
+                return
+
+            if str(user_id) in room['cooldowns']:
+                expiry = room['cooldowns'][str(user_id)]
+                remaining = int(expiry - time.time())
+                if remaining > 0:
+                    await interaction.response.send_message(f"Cooldown active. Wait {remaining}s.", ephemeral=True)
+                    return
+                else:
+                    del room['cooldowns'][str(user_id)]
+
             if any(val and val[0] == user_id for val in room['lineup'].values()):
-                await interaction.response.send_message("⚠️ Already joined.", ephemeral=True)
+                await interaction.response.send_message("You already joined this lineup.", ephemeral=True)
                 return
             
             view = View(timeout=60)
             view.add_item(PositionSelectionDropdown(guild.id, room_id))
-            await interaction.response.send_message(content="**Roster Selection**", view=view, ephemeral=True)
+            await interaction.response.send_message(content="Roster Selection", view=view, ephemeral=True)
         else:
-            if any(p[0] == user_id for p in room['players']):
-                await interaction.response.send_message("⚠️ Already joined.", ephemeral=True)
+            room = storage['active_tryouts'].get(room_id)
+            if not room:
+                await interaction.response.send_message("Session expired.", ephemeral=True)
+                return
+
+            if user_id in storage['blacklist']:
+                await interaction.response.send_message("Access denied.", ephemeral=True)
+                return
+
+            if str(user_id) in room['cooldowns']:
+                expiry = room['cooldowns'][str(user_id)]
+                remaining = int(expiry - time.time())
+                if remaining > 0:
+                    await interaction.response.send_message(f"Cooldown active. Wait {remaining}s.", ephemeral=True)
+                    return
+                else:
+                    del room['cooldowns'][str(user_id)]
+
+            if user_id in room['players']:
+                await interaction.response.send_message("You already joined this lineup.", ephemeral=True)
                 return
             if len(room['players']) >= (room['size'] * 2):
-                await interaction.response.send_message("⚠️ Room full.", ephemeral=True)
+                await interaction.response.send_message("The room is full.", ephemeral=True)
                 return
                 
-            view = View(timeout=60)
-            view.add_item(StyleSelectionDropdown(guild.id, room_id, is_scrim=False))
-            await interaction.response.send_message(content="**Roster Selection**", view=view, ephemeral=True)
+            await interaction.response.defer(ephemeral=True)
+            room['players'].append(user_id)
+            
+            try:
+                main_channel = guild.get_channel(room['channel_id'])
+                board_msg = await main_channel.fetch_message(room['board_msg_id'])
+                embed, is_full = generate_tryout_embed(guild.id, room_id)
+                
+                if is_full:
+                    mentions = " ".join([f"<@{p}>" for p in room['players']])
+                    content_update = f"**{room['size']}V{room['size']} TRYOUT IS FULL!** {mentions}"
+                    await board_msg.edit(content=content_update, embed=embed, view=MainQueueView(room_id, is_scrim=False, full=True))
+                else:
+                    await board_msg.edit(embed=embed)
+            except Exception as e: print(e)
+            
+            await interaction.followup.send("Joined the tryout queue successfully.", ephemeral=True)
         
     elif custom_id.startswith("leave_scrim_") or custom_id.startswith("leave_tryout_"):
         is_scrim = "scrim_" in custom_id
         room_id = custom_id.replace("leave_scrim_", "") if is_scrim else custom_id.replace("leave_tryout_", "")
-        room = storage['active_scrims'].get(room_id) if is_scrim else storage['active_tryouts'].get(room_id)
-        if not room: return
-            
+        
         if is_scrim:
+            room = storage['active_scrims'].get(room_id)
+            if not room: return
             found_pos = None
             for pos, val in room['lineup'].items():
                 if val and val[0] == user_id:
@@ -483,15 +481,17 @@ async def on_interaction(interaction: discord.Interaction):
                 await interaction.response.defer()
                 await refresh_main_board(guild, room_id, is_scrim=True)
             else:
-                await interaction.response.send_message("⚠️ Not in lineup.", ephemeral=True)
+                await interaction.response.send_message("You aren't in the lineup.", ephemeral=True)
         else:
-            if any(p[0] == user_id for p in room['players']):
-                room['players'] = [p for p in room['players'] if p[0] != user_id]
+            room = storage['active_tryouts'].get(room_id)
+            if not room: return
+            if user_id in room['players']:
+                room['players'].remove(user_id)
                 room['cooldowns'][str(user_id)] = time.time() + 5.0
                 await interaction.response.defer()
                 await refresh_main_board(guild, room_id, is_scrim=False)
             else:
-                await interaction.response.send_message("⚠️ Not in lineup.", ephemeral=True)
+                await interaction.response.send_message("You aren't in the lineup.", ephemeral=True)
 
     elif custom_id.startswith("cancel_scrim_") or custom_id.startswith("cancel_tryout_"):
         is_scrim = "scrim_" in custom_id
@@ -499,14 +499,14 @@ async def on_interaction(interaction: discord.Interaction):
         room = storage['active_scrims'].get(room_id) if is_scrim else storage['active_tryouts'].get(room_id)
         
         if not has_staff_perms(interaction.user):
-            await interaction.response.send_message("❌ Denied", ephemeral=True)
+            await interaction.response.send_message("Access denied.", ephemeral=True)
             return
             
         await interaction.response.defer()
         if room:
             try:
                 board_msg = await interaction.channel.fetch_message(room['board_msg_id'])
-                await board_msg.edit(content="❌ **CANCELED**", embed=None, view=None)
+                await board_msg.edit(content="CANCELED", embed=None, view=None)
             except Exception: pass
                 
             if is_scrim: storage['active_scrims'].pop(room_id, None)
@@ -522,36 +522,36 @@ async def permission(ctx, role: discord.Role = None):
     
     if role is None:
         mentions = " ".join([f"<@&{r_id}>" for r_id in storage["allowed_roles"]])
-        await ctx.send(f"ℹ️ Registered staff roles for this server: {mentions if mentions else '`None Set`'}")
+        await ctx.send(f"Registered staff roles for this server: {mentions if mentions else 'None Set'}")
         return
         
     if role.id not in storage["allowed_roles"]:
         storage["allowed_roles"].append(role.id)
-        await ctx.send(f"✅ Registered {role.mention} as an authorized staff role for this server.")
+        await ctx.send(f"Registered {role.mention} as a staff role.")
     else:
         storage["allowed_roles"].remove(role.id)
-        await ctx.send(f"🗑️ Removed {role.mention} from this server's staff roles.")
+        await ctx.send(f"Removed {role.mention} from staff roles.")
 
 
 @bot.command()
 async def panel(ctx):
     if not has_staff_perms(ctx.author):
-        await ctx.send("❌ Denied", delete_after=5)
+        await ctx.send("Access denied.", delete_after=5)
         return
         
     await ctx.message.delete()
-    embed = discord.Embed(title="🛠️ Scrim/Tryout Control Center", color=discord.Color.dark_red())
+    embed = discord.Embed(title="Scrim/Tryout Control Center", color=discord.Color.dark_red())
     await ctx.send(embed=embed, view=AdminControlPanelDashboard(), delete_after=300)
 
 
 @bot.command()
 async def scrim(ctx, region: str = None):
     if not has_staff_perms(ctx.author):
-        await ctx.send("❌ Denied", delete_after=5)
+        await ctx.send("Access denied.", delete_after=5)
         return
 
     if region is None or region.upper() not in ["EU", "NA", "AS"]:
-        await ctx.send("❌ Use: `!scrim <EU/NA/AS>`", delete_after=10)
+        await ctx.send("Use: !scrim <EU/NA/AS>", delete_after=10)
         return
 
     await ctx.message.delete()
@@ -568,7 +568,7 @@ async def scrim(ctx, region: str = None):
     }
         
     embed, _ = generate_scrim_embed(ctx.guild.id, scrim_id)
-    content_text = f"🔹 **{region_upper} SCRIM** | Hosted by **{ctx.author.display_name}**\nPick your position and style to join!"
+    content_text = f"**{region_upper} SCRIM** | Hosted by **{ctx.author.display_name}**\nPick your position and style to join!"
     board_msg = await ctx.send(content=content_text, embed=embed, view=MainQueueView(scrim_id, is_scrim=True))
     storage['active_scrims'][scrim_id]['board_msg_id'] = board_msg.id
 
@@ -576,11 +576,11 @@ async def scrim(ctx, region: str = None):
 @bot.command()
 async def tryout(ctx, size: int = None):
     if not has_staff_perms(ctx.author):
-        await ctx.send("❌ Denied", delete_after=5)
+        await ctx.send("Access denied.", delete_after=5)
         return
 
     if size is None or size not in [2, 3, 4, 5]:
-        await ctx.send("❌ Use: `!tryout <2/3/4/5>`", delete_after=10)
+        await ctx.send("Use: !tryout <2/3/4/5>", delete_after=10)
         return
 
     await ctx.message.delete()
@@ -604,11 +604,11 @@ async def tryout(ctx, size: int = None):
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
-        await ctx.send("❌ Denied", delete_after=5)
+        await ctx.send("Access denied.", delete_after=5)
 
 token = os.environ.get('BOT_TOKEN') or os.getenv('BOT_TOKEN')
 
 if not token:
-    print("❌ ERROR: BOT_TOKEN is completely missing from Railway environment!")
+    print("ERROR: BOT_TOKEN is missing from the environment configuration.")
 else:
     bot.run(token)
